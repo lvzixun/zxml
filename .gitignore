@@ -2,3 +2,4 @@
 *.dSYM
 *.log
 *.o
+*.xml
