@@ -8,6 +8,6 @@ zxml is zero copy, efficient and simple xml parse library for C. [zxml.h](https:
 | library | parse 200M xml file |
 |:-------:|:--------------------:|
 | zxml | 0.901s |
-| rapidxml | 1.287s |
+| rapidxml parse_fastest mode | 1.287s |
 | tinyxml2 | 3.227s |
 | xml.sax of python | 14.996s |
