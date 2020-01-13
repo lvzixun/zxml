@@ -1,7 +1,7 @@
 ## Introduction
 zxml is zero copy, efficient and simple xml parse library for C. [zxml.h](https://github.com/lvzixun/zxml/blob/master/zxml.h) is C api headfile. read [zxml_parser.c](https://github.com/lvzixun/zxml/blob/master/zxml_parser.h) for more detail.
 
-[lua_zxml.c](https://github.com/lvzixun/zxml/blob/master/lua_zxml.c) is lua bind for decode excel xml2003 format file.
+[lua_zxml.c](https://github.com/lvzixun/zxml/blob/master/lua_zxml.c) is lua bind for decode excel xml2003 format file. read [test_zxml.lua](https://github.com/lvzixun/zxml/blob/master/test_zxml.lua) for more detail.
 
 ### benchmark
 
