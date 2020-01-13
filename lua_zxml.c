@@ -4,6 +4,7 @@
 #include <lua.h>
 #include <lauxlib.h>
 #include <stdbool.h>
+#include <assert.h>
 
 static struct {
     struct xml_context* context;
@@ -68,6 +69,144 @@ _get_propertyvalue(struct xml_property* attrs, const char* s) {
 }
 
 
+static struct escape_str {
+    const char* s;
+    char c;
+} ESCAPE_LIST[] = {
+    {NULL, '\0'},
+};
+
+inline static void
+_do_content(lua_State* L, struct xml_str* content, luaL_Buffer* data_buffer) {
+    int l = content->size;
+    const char* s = content->str;
+    const char* sub_str = s;
+    int sub_sz = 0;
+    for(int i=0; i<l; i++){
+        char c = *s;
+        // escape char
+        if(c == '&') {
+            sub_sz = s - sub_str;
+            luaL_addlstring(data_buffer, sub_str, sub_sz);
+            s++;
+            i++;
+            sub_str = s;
+            sub_sz = 0;
+            int j;
+            for(j=i; j<l; j++) {
+                c = *s;
+                if(c == ';') {
+                    sub_sz = j - i;
+                    i = j;
+                    break;
+                }
+                s++;
+            }
+            if(sub_sz <= 0) {
+                luaL_error(L, "escape char error");
+            }
+            char ss = *sub_str;
+            char ret_char = '\0';
+            switch(ss) {
+                case 'l': {
+                    if(sub_sz == 2 && *(sub_str+1) == 't') {
+                        ret_char = '<';
+                    } else {
+                        goto _DO_OTHER_ESCAPE_CHAR;
+                    }
+                }; break;
+                case 'g': {
+                    if(sub_sz == 2 && *(sub_str+1) == 't') {
+                        ret_char = '>';
+                    } else {
+                        goto _DO_OTHER_ESCAPE_CHAR;
+                    }
+                }; break;
+                case 'q': {
+                    if(sub_sz == 4 && 
+                       *(sub_str+1) == 'u' &&
+                       *(sub_str+2) == 'o' &&
+                       *(sub_str+3) == 't'  ) {
+                        ret_char = '"';
+                    } else {
+                        goto _DO_OTHER_ESCAPE_CHAR;
+                    }
+                }; break;
+                case 'a': {
+                    if(sub_sz == 3 && 
+                       *(sub_str+1) == 'm' &&
+                       *(sub_str+2) == 'p'  ) {
+                        ret_char = '&';
+                    } else if (sub_sz == 4 &&
+                       *(sub_str+1) == 'p' && 
+                       *(sub_str+2) == 'o' &&
+                       *(sub_str+3) == 's'  ) {
+                        ret_char = '\'';
+                    } else {
+                        goto _DO_OTHER_ESCAPE_CHAR;
+                    }
+                }; break;
+                case '#': {
+                    if(sub_sz <= 4) {
+                        int v=0;
+                        int base=1;
+                        int k;
+                        for(k=sub_sz-1; k>=1; k--) {
+                            char kc = *(sub_str+k);
+                            if(kc>='0' && kc<='9') {
+                                int cv = (int)(kc - '0');
+                                cv *= base;
+                                v += cv;
+                                base *= 10;
+                            }else {
+                                luaL_error(L, "invalid &#<number> escape char");
+                            }
+                        }
+                        if(v >0 && v<0x7f) {
+                            ret_char = (char)v;
+                        } else {
+                            luaL_error(L, "invalid ascii code:%d", v);
+                        }
+                    } else {
+                        goto _DO_OTHER_ESCAPE_CHAR;
+                    }
+                }; break;
+_DO_OTHER_ESCAPE_CHAR:
+                default: {
+                    struct escape_str* p = ESCAPE_LIST;
+                    struct xml_str str;
+                    str.str = sub_str;
+                    str.size = sub_sz;
+                    while(p->s) {
+                        if(_check_name(&str, p->s)) {
+                            ret_char = p->c;
+                            break;
+                        }
+                        p++;
+                    }
+                    if(!p->s) {
+                        luaL_checkstack(L, 1, NULL);
+                        lua_pushxmlstr(L, &str);
+                        const char* error_escape_str = lua_tostring(L, -1);
+                        luaL_error(L, "invalid escape string:%s", error_escape_str);
+                    }
+                }; break;
+            }
+            assert(ret_char);
+            luaL_addchar(data_buffer, ret_char);
+            sub_str += sub_sz + 1;
+            sub_sz = 0;
+        } else {
+            sub_sz++;
+        }
+        s++;
+    }
+    if(sub_sz>0) {
+        luaL_addlstring(data_buffer, sub_str, sub_sz);
+    }
+}
+
+
 static void
 _resolve_content(lua_State* L, struct xml_node* node, int ret_tbl_idx, struct xml_params* params) {
     enum e_xml_node_type nt = node->nt;
@@ -76,7 +215,8 @@ _resolve_content(lua_State* L, struct xml_node* node, int ret_tbl_idx, struct xm
         do_resolve_children(element, _resolve_content, ret_tbl_idx, params);
     } else if (nt == node_content) {
         struct xml_str* content = &node->value.content_value;
-        luaL_addlstring(params->data_buffer, content->str, content->size);
+        // luaL_addlstring(params->data_buffer, content->str, content->size);
+        _do_content(L, content, params->data_buffer);
     } else {
         luaL_error(L, "invalid node_type:%d", nt);
     }
