@@ -165,7 +165,7 @@ _do_content(lua_State* L, struct xml_str* content, luaL_Buffer* data_buffer) {
                         if(v >0 && v<0x7f) {
                             ret_char = (char)v;
                         } else {
-                            luaL_error(L, "invalid ascii code:%d", v);
+                            ret_char = ' '; // convert invalid ascii code to space
                         }
                     } else {
                         goto _DO_OTHER_ESCAPE_CHAR;
