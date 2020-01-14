@@ -28,6 +28,7 @@ struct xml_params {
     unsigned int table;
     unsigned int row;
     unsigned int cell;
+    unsigned int children;
     luaL_Buffer* data_buffer;
 };
 
@@ -264,7 +265,6 @@ _resolve_cell(lua_State* L, struct xml_node* node, int ret_tbl_idx, struct xml_p
             luaL_buffinit(L, &B);
             do_resolve_children(element, _resolve_data, ret_tbl_idx, params);
             luaL_pushresult(&B);
-            // printf("decode data:%s\n", lua_tostring(L, -1));
             lua_seti(L, ret_tbl_idx, params->cell);
             params->data_buffer = NULL;
         }
@@ -369,8 +369,8 @@ _resolve_worksheet(lua_State* L, struct xml_node* node, int ret_tbl_idx, struct 
 }
 
 
-static int
-_lua_zxml_parser_excel_xml2003(lua_State* L) {
+inline static struct xml_node*
+__zxml_parser(lua_State* L) {
     size_t source_len = 0;
     const char* source = luaL_checklstring(L, 1, &source_len);
     size_t new_memory_size = source_len*8;
@@ -382,7 +382,13 @@ _lua_zxml_parser_excel_xml2003(lua_State* L) {
     } else if(root->nt != node_element) {
         luaL_error(L, "zxml error root node type:%d", root->nt);
     }
+    return root;
+}
 
+
+static int
+_lua_zxml_parser_excel_xml2003(lua_State* L) {
+    struct xml_node* root = __zxml_parser(L);
     lua_newtable(L); // for worksheets
     int top = lua_gettop(L);
     struct xml_params excel_params = {0};
@@ -394,12 +400,71 @@ _lua_zxml_parser_excel_xml2003(lua_State* L) {
 }
 
 
+static void
+_resolve_node(lua_State* L, struct xml_node* node, int ret_tbl_idx, struct xml_params* params) {
+    enum e_xml_node_type nt = node->nt;
+    params->children++;
+    if(nt == node_element) {
+        struct xml_element* element = &node->value.element_value;
+        luaL_checkstack(L, 4, NULL);
+        lua_newtable(L);
+        lua_pushxmlstr(L, &element->tag);
+        lua_setfield(L, -2, "tag");
+        lua_newtable(L);
+        lua_pushvalue(L, -1);
+        lua_setfield(L, -3, "attrs");
+        struct xml_property* p = element->attrs;
+        while(p) {
+            lua_pushxmlstr(L, &p->field_name);
+            lua_pushxmlstr(L, &p->field_value);
+            lua_settable(L, -3);
+            p = p->next;
+        }
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushvalue(L, -1);
+        lua_setfield(L, -3, "children");
+        int top = lua_gettop(L);
+        unsigned int bak = params->children;
+        params->children = 0;
+        do_resolve_children(element, _resolve_node, top, params);
+        params->children = bak;
+        lua_pop(L, 1);
+
+    } else if (nt == node_content) {
+        struct xml_str* content = &node->value.content_value;
+        luaL_Buffer B;
+        luaL_buffinit(L, &B);
+        _do_content(L, content, &B);
+        luaL_pushresult(&B);
+
+    } else {
+        luaL_error(L, "invalid xml node type:%d", nt);
+    }
+
+    if(ret_tbl_idx > 0) {
+        lua_seti(L, ret_tbl_idx, params->children);
+    }
+}
+
+
+static int
+_lua_zxml_parser(lua_State* L) {
+    struct xml_node* root = __zxml_parser(L);
+    struct xml_params node_params = {0};
+    node_params.children = 0;
+    _resolve_node(L, root, -1, &node_params);
+    node_params.children = 0;
+    return 1;
+}
+
 
 int
 luaopen_zxml_core(lua_State* L) {
     luaL_checkversion(L);
     luaL_Reg l[] = {
         {"zxml_parser_excel_xml2003", _lua_zxml_parser_excel_xml2003},
+        {"zxml_parser", _lua_zxml_parser},
         {NULL, NULL},
     };
     luaL_newlib(L, l);
