@@ -29,6 +29,7 @@ struct xml_params {
     unsigned int row;
     unsigned int cell;
     unsigned int children;
+    unsigned int max_col_of_row1;
     luaL_Buffer* data_buffer;
 };
 
@@ -238,6 +239,11 @@ _resolve_data(lua_State* L, struct xml_node* node, int ret_tbl_idx, struct xml_p
 
 static void
 _resolve_cell(lua_State* L, struct xml_node* node, int ret_tbl_idx, struct xml_params* params) {
+    unsigned int max_col_of_row1 = params->max_col_of_row1;
+    if(max_col_of_row1>0 && params->cell>=max_col_of_row1) {
+        return;
+    }
+
     enum e_xml_node_type nt = node->nt;
     if(nt == node_element) {
         struct xml_element* element = &node->value.element_value;
@@ -251,13 +257,16 @@ _resolve_cell(lua_State* L, struct xml_node* node, int ret_tbl_idx, struct xml_p
                 int isnum;
                 lua_Integer cidx = lua_tointegerx(L, -1, &isnum);
                 if(!isnum || cidx < params->cell) {
-                    luaL_error(L, "invalid ss:Index");
+                    luaL_error(L, "invalid cell ss:Index");
                 }
                 lua_pop(L, 1);
                 while(cidx > params->cell) {
                     lua_pushstring(L, "");
                     lua_seti(L, ret_tbl_idx, params->cell);
                     params->cell++;
+                    if(max_col_of_row1>0 && params->cell>max_col_of_row1) {
+                        return;
+                    }
                 }
             }
             luaL_Buffer B;
@@ -279,13 +288,60 @@ _resolve_row(lua_State* L, struct xml_node* node, int ret_tbl_idx, struct xml_pa
         struct xml_element* element = &node->value.element_value;
         if(_check_name(&element->tag, "Row")) {
             params->row++;
-            luaL_checkstack(L, 2, NULL);
+            luaL_checkstack(L, 4, NULL);
+            // set empty row
+            struct xml_str* row_index = _get_propertyvalue(element->attrs, "ss:Index");
+            if(row_index) {
+                lua_pushxmlstr(L, row_index);
+                int isnum;
+                lua_Integer cidx = lua_tointegerx(L, -1, &isnum);
+                if(!isnum || cidx < params->row) {
+                    luaL_error(L, "invalid row ss:Index");
+                }
+                lua_pop(L, 1);
+                while(cidx > params->row) {
+                    lua_newtable(L);
+                    unsigned int i=0;
+                    for(i=1; i<= params->max_col_of_row1; i++) {
+                        lua_pushstring(L, "");
+                        lua_seti(L, -2, i);
+                    }
+                    lua_seti(L, ret_tbl_idx, params->row);
+                    params->row++;
+                }
+            }
             lua_newtable(L);
             lua_pushvalue(L, -1);
             lua_seti(L, ret_tbl_idx, params->row);
             int row_idx = lua_gettop(L);
             params->cell = 0;
             do_resolve_children(element, _resolve_cell, row_idx, params);
+            // first line
+            if(params->max_col_of_row1 == 0) {
+                // adjust first line
+                unsigned int i=0;
+                for(i=params->cell; i>=1; i--) {
+                    size_t l=0;
+                    lua_geti(L, row_idx, i);
+                    lua_tolstring(L, -1, &l);
+                    lua_pop(L, 1);
+                    if(l>0) {
+                        break;
+                    } else {
+                        lua_pushnil(L);
+                        lua_seti(L, row_idx, i);
+                    }
+                }
+                params->max_col_of_row1 = i;
+
+            } else {
+                unsigned int max_col = params->max_col_of_row1;
+                unsigned int i;
+                for(i=params->cell+1; i<= max_col; i++) {
+                    lua_pushstring(L, "");
+                    lua_seti(L, row_idx, i);
+                }
+            }
             params->cell = 0;
             lua_pop(L, 1);
         }
@@ -329,8 +385,10 @@ _resolve_table(lua_State* L, struct xml_node* node, int ret_tbl_idx, struct xml_
             lua_seti(L, ret_tbl_idx, params->table);
             int table_idx = lua_gettop(L);
             params->row = 0;
+            params->max_col_of_row1 = 0;
             do_resolve_children(element, _resolve_row, table_idx, params);
             params->row = 0;
+            params->max_col_of_row1 = 0;
             lua_pop(L, 1);
         }
     }
